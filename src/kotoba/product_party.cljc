@@ -560,3 +560,152 @@
                                    (vals (:edges g))))
      :by-role (frequencies (map :party.product/role ae))
      :ledger (count (:ledger g))}))
+
+;; ───────────────────────── uchiwake / product-bom import ─────────────────────────
+
+(defn- ensure-party-id
+  "Upsert a minimal :company party when `party-id` is valid and missing."
+  [g party-id sourcing]
+  (let [id (str party-id)]
+    (cond
+      (get-in g [:parties id]) g
+      (not (valid-party-id? id)) g
+      :else (upsert-party g {:id id
+                             :kind :company
+                             :sourcing (or sourcing :representative)}))))
+
+(defn- import-product
+  "Upsert a :product/* map and optional brand-owner edge."
+  [g p]
+  (let [id (:product/id p)
+        sourcing (or (:product/sourcing p) :representative)
+        rec (try
+              (product (cond-> {:id id :sourcing sourcing}
+                         (:product/gtin p) (assoc :gtin (:product/gtin p))
+                         (:product/name p) (assoc :name (:product/name p))
+                         (:product/brand p) (assoc :brand (:product/brand p))
+                         (:product/unspsc p) (assoc :unspsc (:product/unspsc p))
+                         (:product/hs-code p) (assoc :hs-code (:product/hs-code p))
+                         (:product/sector p) (assoc :sector (:product/sector p))))
+              (catch #?(:clj Exception :cljs :default) _
+                ;; allow already-canonical product maps that fail re-validate
+                (when (valid-product-id? id)
+                  (select-keys p [:product/id :product/gtin :product/name
+                                  :product/brand :product/unspsc :product/hs-code
+                                  :product/sector :product/sourcing]))))
+        g (if rec (upsert-product g rec) g)
+        bo (:product/brand-owner p)]
+    (if (and rec bo (valid-party-id? (str bo)))
+      (try
+        (-> g
+            (ensure-party-id bo sourcing)
+            (bind (edge {:product id
+                         :party (str bo)
+                         :role :brand-owner
+                         :unspsc (:product/unspsc p)
+                         :sourcing sourcing})))
+        (catch #?(:clj Exception :cljs :default) _ g))
+      g)))
+
+(defn- import-bom-supplier
+  "When parent is a trade product and supplier is a party id, bind :supplier."
+  [g e]
+  (let [parent (str (:bom.edge/parent e))
+        supplier (:bom.edge/supplier e)
+        sourcing (or (:bom.edge/sourcing e) :representative)]
+    (if (and (valid-product-id? parent)
+             supplier
+             (valid-party-id? (str supplier))
+             (get-in g [:products parent]))
+      (try
+        (-> g
+            (ensure-party-id supplier sourcing)
+            (bind (edge {:product parent
+                         :party (str supplier)
+                         :role :supplier
+                         :sourcing sourcing})))
+        (catch #?(:clj Exception :cljs :default) _ g))
+      g)))
+
+(defn- process-role
+  "Map process.step/kind to a party-product role."
+  [kind]
+  (case kind
+    :assembly :assembler
+    :design :operator
+    :operator))
+
+(defn- import-process-operator
+  [g step]
+  (let [of (str (:process.step/of step))
+        op (:process.step/operator step)
+        sourcing (or (:process.step/sourcing step) :representative)
+        role (process-role (:process.step/kind step))]
+    (if (and (valid-product-id? of)
+             op
+             (valid-party-id? (str op))
+             (get-in g [:products of]))
+      (try
+        (-> g
+            (ensure-party-id op sourcing)
+            (bind (edge {:product of
+                         :party (str op)
+                         :role role
+                         :sourcing sourcing})))
+        (catch #?(:clj Exception :cljs :default) _ g))
+      g)))
+
+(defn- import-logistics-carrier
+  [g leg]
+  (let [of (str (:logistics.leg/of leg))
+        carrier (:logistics.leg/carrier leg)
+        sourcing (or (:logistics.leg/sourcing leg) :representative)]
+    (if (and (valid-product-id? of)
+             carrier
+             (valid-party-id? (str carrier))
+             (get-in g [:products of]))
+      (try
+        (-> g
+            (ensure-party-id carrier sourcing)
+            (bind (edge {:product of
+                         :party (str carrier)
+                         :role :carrier
+                         :sourcing sourcing})))
+        (catch #?(:clj Exception :cljs :default) _ g))
+      g)))
+
+(defn import-entities
+  "Import a seq of uchiwake / product-bom-ontology entity maps into graph `g`.
+
+  Recognized shapes (others ignored):
+    - `:product/*` (+ optional `:product/brand-owner` → :brand-owner edge)
+    - `:bom.edge/*` with `:bom.edge/supplier` when parent is a product id
+    - `:process.step/*` with `:process.step/operator` when `of` is a product
+      (`:assembly` → :assembler, else :operator)
+    - `:logistics.leg/*` with `:logistics.leg/carrier` when `of` is a product
+
+  Pure; bulk import does not apply high-stakes human-gate (that is the
+  operator runtime's job for interactive binds). Invalid rows are skipped."
+  [g entities]
+  (let [xs (vec entities)
+        products (filter :product/id xs)
+        boms (filter :bom.edge/id xs)
+        steps (filter :process.step/id xs)
+        legs (filter :logistics.leg/id xs)]
+    (as-> g g
+      (reduce import-product g products)
+      (reduce import-bom-supplier g boms)
+      (reduce import-process-operator g steps)
+      (reduce import-logistics-carrier g legs))))
+
+(defn import-report
+  "Diff summary after import-entities (before/after counts)."
+  [before after]
+  (let [b (graph-summary before)
+        a (graph-summary after)]
+    {:before b
+     :after a
+     :added {:parties (- (:parties a) (:parties b))
+             :products (- (:products a) (:products b))
+             :edges (- (:edges a) (:edges b))
+             :active-edges (- (:active-edges a) (:active-edges b))}}))

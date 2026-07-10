@@ -38,7 +38,18 @@ can resolve without re-deriving identity graphs.
 (pp/party->itonami-supplier
   (pp/party {:id "sup-aero-blades" :kind :supplier :isic "3030"
              :unspsc-segment "25" :country "JPN"}))
+
+;; Bulk import uchiwake / product-bom entity maps
+(pp/import-entities (pp/empty-graph) entities)
 ```
+
+Workspace effects in `gftdcojp/cloud-itonami`:
+
+| Kind | Handler |
+|---|---|
+| `:product-party/bind` | interactive bind (high-stakes gated) |
+| `:product-party/revoke` | interactive revoke (high-stakes gated) |
+| `:product-party/import-entities` | bulk import (`:entities` / JVM `:path` / `:seed`) |
 
 ### Roles
 

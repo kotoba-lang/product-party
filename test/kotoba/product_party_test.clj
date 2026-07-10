@@ -77,3 +77,42 @@
     (is (:high-stakes? ok))
     (is (not (:ok? bad)))
     (is (= ["sup-aero-blades"] (mapv :party/id matched)))))
+
+(deftest import-uchiwake-shaped-entities
+  (let [entities
+        [{:product/id "gtin.05449000000996" :product/gtin "05449000000996"
+          :product/name "Coca-Cola Classic 330ml can" :product/brand "Coca-Cola"
+          :product/brand-owner "org.corp.us.coca-cola"
+          :product/unspsc "50202301" :product/sourcing :authoritative}
+         {:product/id "prod.smartphone-flagship"
+          :product/name "Flagship smartphone" :product/brand-owner "org.corp.us.apple"
+          :product/unspsc "43191501" :product/sourcing :representative}
+         {:bom.edge/id "bom.phone.soc"
+          :bom.edge/parent "prod.smartphone-flagship" :bom.edge/child "part.soc"
+          :bom.edge/supplier "org.corp.tw.tsmc" :bom.edge/sourcing :representative}
+         ;; part-parent supplier must NOT become a product edge
+         {:bom.edge/id "bom.cell.co"
+          :bom.edge/parent "part.li-ion-cell" :bom.edge/child "mat.cobalt"
+          :bom.edge/supplier "org.corp.ch.glencore" :bom.edge/sourcing :representative}
+         {:process.step/id "proc.phone-asm" :process.step/kind :assembly
+          :process.step/of "prod.smartphone-flagship"
+          :process.step/operator "org.corp.tw.foxconn"
+          :process.step/sourcing :representative}
+         {:logistics.leg/id "leg.tshirt"
+          :logistics.leg/of "prod.smartphone-flagship"
+          :logistics.leg/carrier "org.corp.dk.maersk"
+          :logistics.leg/sourcing :representative}]
+        before (pp/empty-graph)
+        after (pp/import-entities before entities)
+        report (pp/import-report before after)]
+    (is (= "org.corp.us.coca-cola"
+           (:party/id (pp/brand-owner after "gtin.05449000000996"))))
+    (is (some #{"org.corp.tw.tsmc"}
+              (map :party/id (pp/parties-of after "prod.smartphone-flagship" :supplier))))
+    (is (some #{"org.corp.tw.foxconn"}
+              (map :party/id (pp/parties-of after "prod.smartphone-flagship" :assembler))))
+    (is (some #{"org.corp.dk.maersk"}
+              (map :party/id (pp/parties-of after "prod.smartphone-flagship" :carrier))))
+    (is (nil? (get-in after [:products "part.li-ion-cell"])))
+    (is (pos? (get-in report [:added :products])))
+    (is (pos? (get-in report [:added :edges])))))
