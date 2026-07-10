@@ -115,4 +115,63 @@
               (map :party/id (pp/parties-of after "prod.smartphone-flagship" :carrier))))
     (is (nil? (get-in after [:products "part.li-ion-cell"])))
     (is (pos? (get-in report [:added :products])))
-    (is (pos? (get-in report [:added :edges])))))
+    (is (pos? (get-in report [:added :edges])))
+    (is (map? (:coverage report)))
+    (is (contains? (:coverage report) :by-role))))
+
+(deftest coverage-api-on-demo-graph
+  (let [g (pp/demo-graph)
+        cov (pp/coverage g)
+        summary (pp/graph-summary g)]
+    (is (= (:products summary) (:products cov)))
+    (is (= (:parties summary) (:parties cov)))
+    (is (= (:active-edges summary) (:active-edges cov)))
+    (is (map? (:by-role cov)))
+    (is (pos? (:products-with-brand-owner cov)))
+    (is (= (:products-with-brand-owner cov)
+           (count (pp/products-with-brand-owner g))))
+    (is (= (:products-without-brand-owner cov)
+           (- (:products cov) (:products-with-brand-owner cov))))
+    (is (<= 0.0 (:brand-owner-coverage cov) 1.0))
+    (is (vector? (:products-missing-brand-owner cov)))))
+
+(deftest coverage-fixture-beats-demo-graph
+  "Expanded fixture import must strictly raise product + active-edge counts
+   vs the demo-graph baseline (maturity/coverage lift)."
+  (let [demo (pp/demo-graph)
+        demo-cov (pp/coverage demo)
+        fixture-g (pp/coverage-fixture-graph)
+        fix-cov (pp/coverage fixture-g)
+        report (pp/import-report (pp/empty-graph) fixture-g)]
+    (is (pp/coverage-beats? fixture-g demo)
+        (str "fixture products=" (:products fix-cov)
+             " edges=" (:active-edges fix-cov)
+             " must beat demo products=" (:products demo-cov)
+             " edges=" (:active-edges demo-cov)))
+    (is (> (:products fix-cov) (:products demo-cov)))
+    (is (> (:active-edges fix-cov) (:active-edges demo-cov)))
+    (is (pos? (:products-with-brand-owner fix-cov)))
+    (is (contains? (:by-role fix-cov) :brand-owner))
+    (is (contains? (:by-role fix-cov) :supplier))
+    (is (= (:coverage report) fix-cov))))
+
+(deftest empty-graph-coverage-zeros
+  (let [cov (pp/coverage (pp/empty-graph))]
+    (is (zero? (:products cov)))
+    (is (zero? (:products-with-brand-owner cov)))
+    (is (zero? (:brand-owner-coverage cov)))
+    (is (= {} (:by-role cov)))))
+
+(deftest bulk-import-loads-brand-owners-without-interactive-gate
+  "Policy: import-entities bulk path loads brand-owner edges without the
+   interactive high-stakes gate (that gate is operator runtime only)."
+  (let [g (pp/import-entities
+           (pp/empty-graph)
+           [{:product/id "prod.policy-check"
+             :product/name "Policy check SKU"
+             :product/brand-owner "org.corp.us.apple"
+             :product/unspsc "43191501"
+             :product/sourcing :representative}])]
+    (is (= "org.corp.us.apple"
+           (:party/id (pp/brand-owner g "prod.policy-check"))))
+    (is (= 1 (:products-with-brand-owner (pp/coverage g))))))

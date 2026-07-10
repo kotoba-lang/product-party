@@ -561,6 +561,46 @@
      :by-role (frequencies (map :party.product/role ae))
      :ledger (count (:ledger g))}))
 
+(defn products-with-brand-owner
+  "Set of product ids that currently have an active :brand-owner edge."
+  [g]
+  (->> (active-edges g)
+       (filter #(= :brand-owner (:party.product/role %)))
+       (map :party.product/product)
+       set))
+
+(defn coverage
+  "Maturity/coverage summary over a product-party join graph.
+
+  Always includes: :products :parties :active-edges :by-role and brand-owner
+  coverage (:products-with-brand-owner, :products-without-brand-owner,
+  :brand-owner-coverage — fraction in [0.0 1.0], or 0.0 when no products).
+
+  Data-driven: all metrics are computed from `g`, never hardcoded."
+  [g]
+  (let [base (graph-summary g)
+        n-prod (:products base)
+        with-bo (products-with-brand-owner g)
+        n-bo (count with-bo)
+        without (max 0 (- n-prod n-bo))]
+    (assoc base
+           :products-with-brand-owner n-bo
+           :products-without-brand-owner without
+           :brand-owner-coverage (if (zero? n-prod)
+                                   0.0
+                                   (double (/ n-bo n-prod)))
+           :products-missing-brand-owner
+           (vec (sort (remove with-bo (keys (:products g))))))))
+
+(defn coverage-beats?
+  "True when `g` strictly exceeds baseline graph `baseline` on both
+  :products and :active-edges (primary maturity lift signal)."
+  [g baseline]
+  (let [a (coverage g)
+        b (coverage baseline)]
+    (and (> (:products a) (:products b))
+         (> (:active-edges a) (:active-edges b)))))
+
 ;; ───────────────────────── uchiwake / product-bom import ─────────────────────────
 
 (defn- ensure-party-id
@@ -699,13 +739,109 @@
       (reduce import-logistics-carrier g legs))))
 
 (defn import-report
-  "Diff summary after import-entities (before/after counts)."
+  "Diff summary after import-entities (before/after counts + coverage)."
   [before after]
   (let [b (graph-summary before)
-        a (graph-summary after)]
+        a (graph-summary after)
+        cov (coverage after)]
     {:before b
      :after a
+     :coverage cov
      :added {:parties (- (:parties a) (:parties b))
              :products (- (:products a) (:products b))
              :edges (- (:edges a) (:edges b))
-             :active-edges (- (:active-edges a) (:active-edges b))}}))
+             :active-edges (- (:active-edges a) (:active-edges b))
+             :products-with-brand-owner
+             (- (:products-with-brand-owner cov)
+                (:products-with-brand-owner (coverage before)))}}))
+
+(defn coverage-fixture-entities
+  "Representative multi-product uchiwake-shaped fixture larger than demo-graph.
+  Used for portable maturity/coverage tests without requiring the full
+  etzhayyim seed file on disk. Bulk import of these brand-owner edges does
+  NOT require interactive high-stakes approval (see import-entities docstring)."
+  []
+  [;; products with brand-owners (more than demo's 5)
+   {:product/id "gtin.05449000000996" :product/gtin "05449000000996"
+    :product/name "Coca-Cola Classic 330ml can" :product/brand "Coca-Cola"
+    :product/brand-owner "org.corp.us.coca-cola"
+    :product/unspsc "50202301" :product/sourcing :authoritative}
+   {:product/id "gtin.03017620422003" :product/gtin "03017620422003"
+    :product/name "Nutella 750g jar" :product/brand "Nutella"
+    :product/brand-owner "org.corp.it.ferrero"
+    :product/unspsc "50161900" :product/sourcing :authoritative}
+   {:product/id "gtin.07613035044289" :product/gtin "07613035044289"
+    :product/name "KitKat 4-finger" :product/brand "KitKat"
+    :product/brand-owner "org.corp.ch.nestle"
+    :product/unspsc "50161800" :product/sourcing :authoritative}
+   {:product/id "prod.smartphone-flagship"
+    :product/name "Flagship smartphone (representative)"
+    :product/brand-owner "org.corp.us.apple"
+    :product/unspsc "43191501" :product/sourcing :representative}
+   {:product/id "prod.ev-battery-pack"
+    :product/name "EV traction battery pack"
+    :product/brand-owner "org.corp.cn.byd"
+    :product/unspsc "26111701" :product/sourcing :representative}
+   {:product/id "prod.cotton-tshirt"
+    :product/name "Cotton T-shirt"
+    :product/brand-owner "org.corp.jp.fast-retailing"
+    :product/unspsc "53101500" :product/sourcing :representative}
+   {:product/id "prod.ai-gpu-module"
+    :product/name "AI GPU server module"
+    :product/brand-owner "org.corp.us.nvidia"
+    :product/unspsc "43201401" :product/sourcing :representative}
+   {:product/id "prod.5g-radio"
+    :product/name "5G radio unit"
+    :product/brand-owner "org.corp.se.ericsson"
+    :product/unspsc "43222609" :product/sourcing :representative}
+   {:product/id "prod.aircraft-narrowbody"
+    :product/name "Narrowbody commercial aircraft"
+    :product/brand-owner "org.corp.us.boeing"
+    :product/unspsc "25111500" :product/sourcing :representative}
+   {:product/id "prod.ev-vehicle"
+    :product/name "Battery-electric vehicle"
+    :product/brand-owner "org.corp.cn.byd"
+    :product/unspsc "25101503" :product/sourcing :representative}
+   ;; BOM suppliers on product parents
+   {:bom.edge/id "bom.phone.soc"
+    :bom.edge/parent "prod.smartphone-flagship" :bom.edge/child "part.soc"
+    :bom.edge/supplier "org.corp.tw.tsmc" :bom.edge/sourcing :representative}
+   {:bom.edge/id "bom.phone.dram"
+    :bom.edge/parent "prod.smartphone-flagship" :bom.edge/child "part.dram"
+    :bom.edge/supplier "org.corp.kr.sk-hynix" :bom.edge/sourcing :representative}
+   {:bom.edge/id "bom.gpu.die"
+    :bom.edge/parent "prod.ai-gpu-module" :bom.edge/child "part.gpu-die"
+    :bom.edge/supplier "org.corp.tw.tsmc" :bom.edge/sourcing :representative}
+   {:bom.edge/id "bom.gpu.hbm"
+    :bom.edge/parent "prod.ai-gpu-module" :bom.edge/child "part.hbm"
+    :bom.edge/supplier "org.corp.kr.sk-hynix" :bom.edge/sourcing :representative}
+   {:bom.edge/id "bom.evv.pack"
+    :bom.edge/parent "prod.ev-vehicle" :bom.edge/child "prod.ev-battery-pack"
+    :bom.edge/supplier "org.corp.cn.catl" :bom.edge/sourcing :representative}
+   ;; process operators / assemblers
+   {:process.step/id "proc.phone-asm" :process.step/kind :assembly
+    :process.step/of "prod.smartphone-flagship"
+    :process.step/operator "org.corp.tw.foxconn"
+    :process.step/sourcing :representative}
+   {:process.step/id "proc.gpu-design" :process.step/kind :design
+    :process.step/of "prod.ai-gpu-module"
+    :process.step/operator "org.corp.us.nvidia"
+    :process.step/sourcing :representative}
+   {:process.step/id "proc.cmt" :process.step/kind :assembly
+    :process.step/of "prod.cotton-tshirt"
+    :process.step/operator "org.corp.vn.garment-co"
+    :process.step/sourcing :representative}
+   ;; logistics carriers
+   {:logistics.leg/id "leg.tshirt.vn-eu"
+    :logistics.leg/of "prod.cotton-tshirt"
+    :logistics.leg/carrier "org.corp.dk.maersk"
+    :logistics.leg/sourcing :representative}
+   {:logistics.leg/id "leg.phone.cn-ww"
+    :logistics.leg/of "prod.smartphone-flagship"
+    :logistics.leg/carrier "org.corp.dk.maersk"
+    :logistics.leg/sourcing :representative}])
+
+(defn coverage-fixture-graph
+  "Empty graph after import of coverage-fixture-entities."
+  []
+  (import-entities (empty-graph) (coverage-fixture-entities)))

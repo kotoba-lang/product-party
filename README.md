@@ -41,7 +41,20 @@ can resolve without re-deriving identity graphs.
 
 ;; Bulk import uchiwake / product-bom entity maps
 (pp/import-entities (pp/empty-graph) entities)
+
+;; Maturity / coverage (data-driven counts + brand-owner coverage)
+(pp/coverage (pp/coverage-fixture-graph))
+;; => {:products N :parties M :active-edges E :by-role {...}
+;;     :products-with-brand-owner B :brand-owner-coverage 0..1 ...}
+(pp/coverage-beats? (pp/coverage-fixture-graph) (pp/demo-graph)) ; true
 ```
+
+### Policy: interactive vs bulk
+
+| Path | Brand-owner edges |
+|---|---|
+| Interactive `bind!` / workspace `:product-party/bind` | **High-stakes** — requires `:approve-high-stakes? true` |
+| Bulk `import-entities` / `:product-party/import-entities` | Loads public seed brand-owners **without** per-edge interactive gate |
 
 Workspace effects in `gftdcojp/cloud-itonami`:
 
