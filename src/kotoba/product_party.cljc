@@ -429,6 +429,44 @@
       seg (conj seg)
       (valid-unspsc-commodity? code) (conj (digits-only code)))))
 
+(defn party-goyoukiki-unspsc-tags
+  "Union of goyoukiki UNSPSC tags across all products linked to `party-id`."
+  [g party-id]
+  (reduce (fn [acc prod]
+            (into acc (product->goyoukiki-unspsc-tags prod)))
+          #{}
+          (products-of g party-id)))
+
+(defn goyoukiki-candidates
+  "Project product-party graph parties into goyoukiki.model/candidate-shaped
+  maps (`:id :name :unspsc-tags :status …`). Only parties with ≥1 active
+  product edge are emitted — ready to seed MatchActor candidate pools."
+  [g]
+  (->> (vals (:parties g))
+       (filter #(seq (products-of g (:party/id %))))
+       (mapv (fn [p]
+               {:id (:party/id p)
+                :name (or (:party/name p) (:party/id p))
+                :unspsc-tags (party-goyoukiki-unspsc-tags g (:party/id p))
+                :categories #{}
+                :rank nil
+                :contact nil
+                :status :qualified
+                :party/kind (:party/kind p)
+                :party/isic (:party/isic p)}))))
+
+(defn enrich-goyoukiki-candidates
+  "Merge product-party-derived `:unspsc-tags` into candidate maps by `:id`.
+  Candidates unknown to the graph are left unchanged."
+  [g candidates]
+  (let [by-id (into {} (map (juxt :id identity) (goyoukiki-candidates g)))]
+    (mapv (fn [c]
+            (if-let [p (get by-id (str (:id c)))]
+              (update c :unspsc-tags
+                      (fn [tags] (into (set (or tags #{})) (:unspsc-tags p))))
+              c))
+          (or candidates []))))
+
 (defn match-parties-for-product
   "Return active parties that could service a product under procurement-ish
    criteria: same UNSPSC segment (party or edge), optional ISIC match.

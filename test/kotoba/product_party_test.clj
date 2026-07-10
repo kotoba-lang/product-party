@@ -175,3 +175,22 @@
     (is (= "org.corp.us.apple"
            (:party/id (pp/brand-owner g "prod.policy-check"))))
     (is (= 1 (:products-with-brand-owner (pp/coverage g))))))
+
+(deftest goyoukiki-candidates-carry-unspsc-tags
+  (let [g (pp/coverage-fixture-graph)
+        cands (pp/goyoukiki-candidates g)
+        tsmc (first (filter #(= "org.corp.tw.tsmc" (:id %)) cands))
+        enriched (pp/enrich-goyoukiki-candidates
+                  g
+                  [{:id "org.corp.tw.tsmc" :name "TSMC" :unspsc-tags #{"xx"}}
+                   {:id "unknown-vendor" :name "X" :unspsc-tags #{}}])]
+    (is (seq cands))
+    (is (set? (:unspsc-tags tsmc)))
+    (is (contains? (:unspsc-tags tsmc) "43")
+        "segment from smartphone UNSPSC 43191501")
+    (is (contains? (:unspsc-tags tsmc) "43191501"))
+    (is (contains? (:unspsc-tags (first enriched)) "xx")
+        "existing tags preserved")
+    (is (contains? (:unspsc-tags (first enriched)) "43"))
+    (is (= #{} (:unspsc-tags (second enriched)))
+        "unknown candidate not invented")))
