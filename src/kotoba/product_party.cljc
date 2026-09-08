@@ -20,7 +20,7 @@
 
   Pure data + pure functions. No network, no governor, no store backend.
   cloud-itonami wraps this with a tenant MemStore + bind/revoke effects."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 ;; ───────────────────────── role vocabulary ─────────────────────────
 
@@ -107,7 +107,7 @@
      :else nil))
   ([_gtin slug]
    (str "prod." (-> (str slug)
-                    str/lower-case
+                    str/lower
                     (str/replace #"[^a-z0-9._-]+" "-")
                     (str/replace #"^-+|-+$" "")))))
 
