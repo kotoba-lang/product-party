@@ -90,7 +90,7 @@ See [`docs/cloud-itonami.md`](docs/cloud-itonami.md). The runtime facade is
 ## Test
 
 ```bash
-clojure -M:test
+kbb -M:test
 ```
 
 ## License
