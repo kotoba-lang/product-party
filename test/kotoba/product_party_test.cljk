@@ -1,5 +1,5 @@
 (ns kotoba.product-party-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.product-party :as pp]))
 
 (deftest gtin-normalize-and-check
